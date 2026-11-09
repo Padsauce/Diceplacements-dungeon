@@ -187,6 +187,25 @@ details.newp form { display: flex; flex-direction: column; gap: 10px; margin-top
 .tabs { display: flex; gap: 6px; justify-content: center; }
 .tabs button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 table.lb td .av { width: 24px; height: 24px; font-size: 13px; margin-right: 6px; }
+#toast { position: fixed; left: 50%; top: max(12px, env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 40; max-width: calc(100% - 32px);
+  background-color: var(--paper); background-image: var(--grain); border: 3px double var(--ink); padding: 8px 14px; font: italic 18px var(--font-fell); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+#toast[hidden] { display: none; }
+#toast b { font: 15px var(--font-title); color: var(--red); letter-spacing: .06em; display: block; font-style: normal; }
+.mode { border: 3px double var(--ink); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: rgba(255,250,235,.5); }
+.mode h3 { margin: 0; font: 22px/1.1 var(--font-title); }
+.mode p { margin: 0; font-size: 15.5px; line-height: 1.4; }
+.mode .best { font: italic 15px var(--font-fell); color: var(--ink-soft); }
+.mode .btns { justify-content: flex-start; }
+.score-big { text-align: center; font: 700 46px/1 var(--font-body); font-variant-numeric: lining-nums; }
+.score-big small { display: block; font: 13px var(--font-title); letter-spacing: .12em; color: var(--ink-soft); }
+.trophy { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; border-bottom: 1px solid var(--paper-3); padding: 7px 2px; }
+.trophy .ico { font-size: 24px; text-align: center; filter: grayscale(1) sepia(.3); }
+.trophy.locked { opacity: .5; }
+.trophy b { display: block; font-weight: 600; }
+.trophy small { display: block; font: italic 14.5px/1.3 var(--font-fell); color: var(--ink-soft); }
+.trophy .when { font: italic 13px var(--font-fell); color: var(--ink-soft); white-space: nowrap; }
+.prog { height: 5px; border: 1px solid var(--ink); margin-top: 4px; }
+.prog i { display: block; height: 100%; background: var(--ink); }
 @media (prefers-reduced-motion: reduce) { #rollBtn.ready, #rollBtn.rolling, .bn-die.rolling { animation: none; } }
 </style>
 
@@ -219,6 +238,7 @@ table.lb td .av { width: 24px; height: 24px; font-size: 13px; margin-right: 6px;
   </footer>
 </div>
 <div class="overlay" id="modal" hidden><div class="card" id="modalCard"></div></div>
+<div id="toast" hidden role="status" aria-live="polite"></div>
 
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
 <script type="module">
@@ -320,9 +340,163 @@ const FLOORS = [
 #h#.#...#.#
 ###########`,
 ];
-const SHOP_AFTER = new Set([2, 4]);
+// ============================================================
+//  Générateur d'étages au format carnet (11 × 15), avec graine
+// ============================================================
+function mulberry32(a) {
+  return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+const GEN_W = 11, GEN_H = 15;
+function genFloor(seed, level) {
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const m = tryGenFloor((seed * 2654435761 + attempt * 40503) >>> 0, level);
+    if (m) return m;
+  }
+  return null;
+}
+function tryGenFloor(seed, level) {
+  const rnd = mulberry32(seed), ri = (a, b) => a + Math.floor(rnd() * (b - a + 1)), pick = a => a[Math.floor(rnd() * a.length)];
+  const W = GEN_W, H = GEN_H, g = Array.from({ length: H }, () => Array(W).fill("#"));
+  const inside = (x, y) => x > 0 && y > 0 && x < W - 1 && y < H - 1;
+  // 1. Labyrinthe creusé sur les cases impaires
+  const nodes = []; for (let y = 1; y < H - 1; y += 2) for (let x = 1; x < W - 1; x += 2) nodes.push([x, y]);
+  const seen = new Set(), first = pick(nodes), stack = [first]; seen.add(first + ""); g[first[1]][first[0]] = ".";
+  while (stack.length) {
+    const [x, y] = stack[stack.length - 1];
+    const nb = [[2, 0], [-2, 0], [0, 2], [0, -2]].map(([dx, dy]) => [x + dx, y + dy, x + dx / 2, y + dy / 2]).filter(([nx, ny]) => inside(nx, ny) && !seen.has([nx, ny] + ""));
+    if (!nb.length) { stack.pop(); continue; }
+    const [nx, ny, wx, wy] = pick(nb); g[wy][wx] = "."; g[ny][nx] = "."; seen.add([nx, ny] + ""); stack.push([nx, ny]);
+  }
+  // 2. On l'ouvre : boucles et petites salles, comme les étages dessinés
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) if (g[y][x] === "#") {
+    const horiz = g[y][x - 1] !== "#" && g[y][x + 1] !== "#", vert = g[y - 1][x] !== "#" && g[y + 1][x] !== "#";
+    if ((horiz || vert) && rnd() < 0.3) g[y][x] = ".";
+  }
+  for (let k = ri(1, 2); k > 0; k--) { const w = ri(2, 3), h = ri(2, 3), x0 = ri(1, W - 1 - w), y0 = ri(1, H - 1 - h); for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) g[y][x] = "."; }
+  const floors = []; for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) if (g[y][x] === ".") floors.push([x, y]);
+  const bfs = (sx, sy, blocked) => {
+    const d = Array.from({ length: H }, () => Array(W).fill(-1)); d[sy][sx] = 0; const q = [[sx, sy]];
+    for (let i = 0; i < q.length; i++) { const [x, y] = q[i]; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy;
+      if (g[ny][nx] !== "#" && d[ny][nx] < 0 && !(blocked && blocked[0] === nx && blocked[1] === ny)) { d[ny][nx] = d[y][x] + 1; q.push([nx, ny]); } } }
+    return d;
+  };
+  // 3. Départ dans un coin, escalier le plus loin possible
+  const corners = floors.filter(([x, y]) => (x <= 3 || x >= W - 4) && (y <= 3 || y >= H - 4));
+  const [px, py] = pick(corners.length ? corners : floors);
+  const dist = bfs(px, py);
+  if (floors.some(([x, y]) => dist[y][x] < 0)) return null;
+  let best = -1, cands = [];
+  for (const [x, y] of floors) { if (dist[y][x] > best) { best = dist[y][x]; cands = [[x, y]]; } else if (dist[y][x] === best) cands.push([x, y]); }
+  if (best < 12) return null;
+  const [sx, sy] = pick(cands);
+  g[py][px] = "P"; g[sy][sx] = "S";
+  const near = (x, y, ax, ay, r = 1) => Math.abs(x - ax) <= r && Math.abs(y - ay) <= r;
+  // 4. Porte verrouillée qui coupe l'accès à l'escalier (avec sa clé accessible sans la porte)
+  let region = null;
+  if (level >= 3 && rnd() < 0.45) {
+    const path = []; let cx = sx, cy = sy;
+    while (dist[cy][cx] > 0) { path.push([cx, cy]); const prev = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [cx + dx, cy + dy]).find(([nx, ny]) => dist[ny] && dist[ny][nx] === dist[cy][cx] - 1); [cx, cy] = prev; }
+    for (const [dx, dy] of path.slice(1)) {
+      if (near(dx, dy, px, py, 2)) break;
+      const d2 = bfs(px, py, [dx, dy]);
+      const ok = !floors.some(([x, y]) => d2[y][x] >= 0 && near(x, y, sx, sy)) && d2[sy][sx] < 0;
+      if (!ok) continue;
+      const keys = floors.filter(([x, y]) => d2[y][x] >= 4 && g[y][x] === ".");
+      if (!keys.length) break;
+      g[dy][dx] = "D"; const [kx, ky] = pick(keys); g[ky][kx] = "k";
+      region = d2; break;
+    }
+  }
+  const reach = (x, y) => region ? region[y][x] >= 0 : true;
+  const free = () => floors.filter(([x, y]) => g[y][x] === "." && !near(x, y, px, py) && !near(x, y, sx, sy));
+  // 5. Paire de téléportails, du côté accessible sans la porte
+  if (level >= 2 && rnd() < 0.35) {
+    const f = free().filter(([x, y]) => reach(x, y));
+    for (let t = 0; t < 30 && f.length > 1; t++) {
+      const a = pick(f), b = pick(f);
+      if (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) >= 8) { g[a[1]][a[0]] = "T"; g[b[1]][b[0]] = "T"; break; }
+    }
+  }
+  // 6. Trouvailles et ennemis, selon la difficulté
+  const put = (ch, n) => { for (let i = 0; i < n; i++) { const f = free(); if (!f.length) return; const [x, y] = pick(f); g[y][x] = typeof ch === "function" ? ch() : ch; } };
+  const maxStr = Math.min(6, 1 + Math.ceil(level / 5)), mysteryP = Math.min(.35, level * .02);
+  put("c", ri(5, 8)); put("C", ri(1, 2));
+  put("h", (level < 10 ? 2 : 1) + (rnd() < .5 ? 1 : 0)); put("H", rnd() < .5 ? 1 : 0);
+  put("w", ri(0, Math.min(3, 1 + Math.floor(level / 6))));
+  put(() => rnd() < mysteryP ? "m" : String(ri(Math.max(1, maxStr - 3), maxStr)), Math.min(11, 3 + Math.floor(level / 3)));
+  return g.map(r => r.join("")).join("\n");
+}
+
+// ============================================================
+//  Modes de jeu (v3.2) : partie rapide, normal (50 étages), sans fin
+// ============================================================
+const MODES = {
+  quick:   { name: "Partie rapide", floors: 5, desc: "Cinq étages tirés au hasard. Plus de PV, partie terminée. Score : PV + pièces + objets." },
+  normal:  { name: "Normal", floors: 50, desc: "Cinquante étages, toujours les mêmes, jusqu'à la Salle du Trésor. Une mort ajoute une tombe et on continue. Score : pièces + PV + objets − 10 par tombe." },
+  endless: { name: "Sans fin", floors: Infinity, desc: "Des étages au hasard, de plus en plus durs. Plus de PV, partie terminée. Score : 10 par étage terminé + pièces + objets." },
+};
+const MODE_IDS = ["quick", "normal", "endless"];
+const QUICK_LEVELS = [3, 6, 9, 12, 15];
+const ITEM_POINTS = { passe: 6, tele: 8, mull: 4, dbl: 5 };
+const totalFloors = () => MODES[G.mode].floors;
+function shopAfter(n) { // n = numéro de l'étage qu'on vient de quitter
+  if (G.mode === "quick") return n === 2 || n === 4;
+  if (G.mode === "endless") return n % 3 === 0;
+  return n % 5 === 0;
+}
+function floorText(fi) {
+  let m = null;
+  if (G.mode === "normal") m = fi < FLOORS.length ? FLOORS[fi] : genFloor(90001 + fi * 7, fi + 1);
+  else if (G.mode === "quick") m = genFloor(G.run.seed + fi * 101, QUICK_LEVELS[fi] || 15);
+  else m = genFloor(G.run.seed + fi * 101, fi + 2);
+  return m || FLOORS[fi % FLOORS.length];
+}
+function toRoman(n) {
+  if (!(n > 0)) return "—";
+  const t = [[1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"], [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]];
+  let out = ""; for (const [v, r] of t) while (n >= v) { out += r; n -= v; } return out;
+}
+const itemsPoints = () => Object.entries(G.items).reduce((s, [k, n]) => s + n * (ITEM_POINTS[k] || 0), 0);
+const deadNow = () => G.mode !== "normal" && hpNow() < 1;
+
+// ============================================================
+//  Trophées : des règles sur des événements, ou des compteurs avec un objectif
+// ============================================================
+const TROPHIES = [
+  { id: "premier-pas", ico: "👣", name: "Premier pas", desc: "Sortir d'un étage.", on: "floorExit" },
+  { id: "bourse", ico: "💰", name: "Bourse pleine", desc: "Gagner 20 ¢ dans un même étage.", on: "floorExit", test: e => e.coins >= 20 },
+  { id: "eclair", ico: "⚡", name: "Éclair", desc: "Finir une partie rapide.", on: "runEnd", test: e => e.mode === "quick" && e.completed },
+  { id: "indemne", ico: "🛡️", name: "Sans une égratignure", desc: "Finir une partie rapide sans perdre de PV.", on: "runEnd", test: e => e.mode === "quick" && e.completed && e.hpLost === 0 },
+  { id: "tresor", ico: "💎", name: "La Salle du Trésor", desc: "Finir le mode normal.", on: "runEnd", test: e => e.mode === "normal" && e.completed },
+  { id: "immortel", ico: "👑", name: "Immortel", desc: "Finir le mode normal sans aucune tombe.", on: "runEnd", test: e => e.mode === "normal" && e.completed && e.tombs === 0 },
+  { id: "profondeurs", ico: "🕯️", name: "Profondeurs", desc: "Atteindre l'étage X en mode sans fin.", on: "floorExit", test: e => e.mode === "endless" && e.floor >= 10 },
+  { id: "abysses", ico: "🌑", name: "Abysses", desc: "Atteindre l'étage XXV en mode sans fin.", on: "floorExit", test: e => e.mode === "endless" && e.floor >= 25 },
+  { id: "chasseur", ico: "⚔️", name: "Chasseur", desc: "Traverser 50 monstres.", on: "monster", counter: "monsters", goal: 50 },
+  { id: "sac", ico: "🎒", name: "Sac bien rempli", desc: "Avoir 4 objets à usage unique en même temps.", on: "items", test: e => e.total >= 4 },
+  { id: "centurion", ico: "🏆", name: "Centurion", desc: "Faire 100 points en une partie.", on: "runEnd", test: e => e.score >= 100 },
+  { id: "araignees", ico: "🕸️", name: "Ami des araignées", desc: "Se prendre dans 10 toiles.", on: "web", counter: "webs", goal: 10, secret: true },
+];
+function trophyEvent(e) {
+  const p = profile(); if (!p) return;
+  p.trophies = p.trophies || {}; p.counters = p.counters || {};
+  const won = [];
+  for (const t of TROPHIES) {
+    if (t.on !== e.type) continue;
+    if (t.counter) p.counters[t.counter] = (p.counters[t.counter] || 0) + (e.inc || 1);
+    if (p.trophies[t.id]) continue;
+    if (t.counter ? p.counters[t.counter] >= t.goal : (!t.test || t.test(e))) { p.trophies[t.id] = Date.now(); won.push(t); }
+  }
+  saveStore();
+  for (const t of won) toast(`<b>Trophée obtenu</b>${t.ico} ${esc(t.name)}`);
+}
+const toastQueue = [];
+function toast(html) {
+  toastQueue.push(html); if (toastQueue.length > 1) return;
+  const show = () => { const el = $("toast"); el.innerHTML = toastQueue[0]; el.hidden = false;
+    setTimeout(() => { el.hidden = true; toastQueue.shift(); if (toastQueue.length) setTimeout(show, 250); }, 2600); };
+  show();
+}
 const START_HP = 10, HEART = 2;
-const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
 const SHOP = [
   { id: "encas",  name: "En-cas", desc: "+3 PV", price: 3, kind: "now" },
   { id: "repas",  name: "Repas", desc: "+6 PV", price: 5, kind: "now" },
@@ -356,6 +530,13 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;"
 // ============================================================
 const STORE_KEY = "dpd-papier-profils-v1";
 let store = (() => { try { const s = JSON.parse(localStorage.getItem(STORE_KEY)); if (s && Array.isArray(s.profiles)) return s; } catch {} return { v: 1, active: null, profiles: [] }; })();
+// v3.2 : une sauvegarde par mode, et la liste des parties terminées pour le classement
+store.runs = Array.isArray(store.runs) ? store.runs : [];
+for (const p of store.profiles) {
+  p.saves = p.saves || {};
+  if (p.save) { p.saves.normal = { ...p.save, run: { seed: 0, hpLost: 0 } }; delete p.save; }
+  p.best = p.best || {};
+}
 function saveStore() { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {} }
 const profile = () => store.profiles.find(p => p.id === store.active) || null;
 const blankStats = () => ({ floorMax: 0, gold: 0, goldBest: 0, rolls: 0, turns: 0, wins: 0, games: 0, tombsBest: null });
@@ -367,7 +548,7 @@ function validName(name, exceptId) {
   return null;
 }
 function createProfile(name, avatar = 0) {
-  const p = { id: Date.now().toString(36) + Math.floor(R() * 1e6).toString(36), name: name.trim(), avatar, stats: blankStats(), save: null };
+  const p = { id: Date.now().toString(36) + Math.floor(R() * 1e6).toString(36), name: name.trim(), avatar, stats: blankStats(), saves: {}, best: {}, trophies: {}, counters: {} };
   store.profiles.push(p); store.active = p.id; saveStore(); pushProfile(p); return p;
 }
 
@@ -384,6 +565,7 @@ const avHTML = (i, cls = "") => `<span class="av ${cls}" aria-hidden="true">${AV
 //  État de la partie
 // ============================================================
 const G = {
+  mode: "normal", run: { seed: 0, hpLost: 0 },
   phase: "menu", fi: 0, map: null, W: 11, H: 15,
   hero: { x: 0, y: 0, px: 0, py: 0, hop: 0 },
   maxHp: START_HP, ledger: null, deaths: 0,
@@ -395,21 +577,23 @@ const G = {
 };
 const gameStats = () => ({ turns: 0, rolls: 0, gold: 0, floorsDead: [] });
 const copyStats = s => ({ ...s, floorsDead: [...s.floorsDead] });
-function newGame() {
+function newGame(mode = "normal") {
   const p = profile();
+  G.mode = mode; G.run = { seed: Math.floor(R() * 1e9), hpLost: 0 };
   G.maxHp = START_HP; G.deaths = 0; G.items = { passe: 0, tele: 0, mull: 0, dbl: 0 }; G.next = {};
   G.stats = gameStats(); G.committed = gameStats();
   if (p) { p.stats.games++; pushProfile(p); }
   loadFloor(0, START_HP, 0);
 }
-function resumeGame(save) {
+function resumeGame(mode, save) {
+  G.mode = mode; G.run = { seed: 0, hpLost: 0, ...(save.run || {}) };
   G.maxHp = save.maxHp; G.deaths = save.deaths; G.items = { ...save.items }; G.next = { ...save.active };
   G.stats = copyStats(save.stats); G.committed = copyStats(save.stats);
   loadFloor(save.fi, save.hp, save.coins);
 }
 function loadFloor(fi, hp, coins) {
   G.fi = fi;
-  G.map = FLOORS[fi].split("\n").map(r => [...r]);
+  G.map = floorText(fi).split("\n").map(r => [...r]);
   G.H = G.map.length; G.W = G.map[0].length;
   G.used = new Set(); G.hasKey = false; G.portalsUsed = false;
   G.trail = []; G.marks = []; G.lastDir = null; G.last = null; G.stairsCrossed = false; G.pick = null; G.teleMode = false;
@@ -420,7 +604,7 @@ function loadFloor(fi, hp, coins) {
   const p = profile();
   if (p) {
     p.stats.floorMax = Math.max(p.stats.floorMax, fi + 1);
-    p.save = { fi, hp, coins, maxHp: G.maxHp, deaths: G.deaths, items: { ...G.items }, active: { ...G.active }, stats: copyStats(G.stats) };
+    p.saves[G.mode] = { fi, hp, coins, maxHp: G.maxHp, deaths: G.deaths, items: { ...G.items }, active: { ...G.active }, stats: copyStats(G.stats), run: { ...G.run } };
     commitStats();
   }
   G.phase = "play";
@@ -950,7 +1134,7 @@ const fmtSigned = (v, sign) => v ? sign + v : "—";
 function refreshUI() {
   if (!G.ledger) return;
   const L = G.ledger;
-  $("floorLabel").textContent = `Étage ${ROMAN[G.fi]} sur ${ROMAN[FLOORS.length - 1]}`;
+  $("floorLabel").textContent = G.mode === "endless" ? `Étage ${toRoman(G.fi + 1)} · sans fin` : `Étage ${toRoman(G.fi + 1)} sur ${toRoman(totalFloors())}`;
   $("tombs").textContent = `✝ ${G.deaths}`;
   $("hpIn").textContent = L.hpIn; $("hpPlus").textContent = fmtSigned(L.hpPlus, "+"); $("hpMinus").textContent = fmtSigned(L.hpMinus, "−");
   const hp = hpNow(); $("hpTot").textContent = `${hp} / ${G.maxHp}`; $("hpTot").classList.toggle("bad", hp < 1);
@@ -1097,14 +1281,14 @@ async function playTurn() {
       jump = false; G.items.passe--;
       const nx = h.x + 2 * dir[0], ny = h.y + 2 * dir[1];
       await moveTo(nx, ny, 260, .5); seg.pts.push([nx, ny]); remaining--; G.last.remaining = remaining; refreshRoll();
-      const r = await enterCell(nx, ny, remaining); if (r.exit) return leaveMidMove(); if (r.seg) seg = r.seg; if (r.stop) break;
+      const r = await enterCell(nx, ny, remaining); if (deadNow()) return endRun(false); if (r.exit) return leaveMidMove(); if (r.seg) seg = r.seg; if (r.stop) break;
       continue;
     }
     if (canStep(h.x, h.y, dir)) {
       const nx = h.x + dir[0], ny = h.y + dir[1];
       await moveTo(nx, ny, 115, .16); seg.pts.push([nx, ny]); remaining--; G.last.remaining = remaining; refreshRoll();
       setHint(remaining ? `Encore ${remaining} pas…` : "");
-      const r = await enterCell(nx, ny, remaining); if (r.exit) return leaveMidMove(); if (r.seg) seg = r.seg; if (r.stop) break;
+      const r = await enterCell(nx, ny, remaining); if (deadNow()) return endRun(false); if (r.exit) return leaveMidMove(); if (r.seg) seg = r.seg; if (r.stop) break;
       continue;
     }
     const opts = buildOptions(dirs, remaining, h.x, h.y, dir);
@@ -1148,7 +1332,7 @@ async function enterCell(x, y, remaining = 0) {
   if (G.used.has(k) || "#.PD".includes(c)) return {};
   G.used.add(k);
   const mult = A.cresus ? 2 : 1;
-  const hurt = n => { const v = A.bouclier ? 0 : (A.gringalets ? 1 : n); L.hpMinus += v; return v; };
+  const hurt = n => { const v = A.bouclier ? 0 : (A.gringalets ? 1 : n); L.hpMinus += v; G.run.hpLost += v; trophyEvent({ type: "monster" }); return v; };
   const gain = v => { L.cPlus += v; G.stats.gold += v; };
   switch (c) {
     case "c": gain(mult); refreshUI(); await flash(`Une pièce : +${mult} ¢`, 380); break;
@@ -1160,7 +1344,7 @@ async function enterCell(x, y, remaining = 0) {
       const v = await rollD6("Un monstre inconnu", v => `−${v} PV`); hurt(v); break; }
     case "h": L.hpPlus += HEART; refreshUI(); await flash(`Un cœur : +${HEART} PV`, 420); break;
     case "H": { const v = await rollD6("Un cœur mystère", v => `+${v} PV`); L.hpPlus += v; break; }
-    case "w": { const v = await rollD6("Une toile d'araignée", v => `−${v} ¢. Te voilà englué.`); L.cMinus += v; refreshUI(); return { stop: true }; }
+    case "w": { const v = await rollD6("Une toile d'araignée", v => `−${v} ¢. Te voilà englué.`); L.cMinus += v; refreshUI(); trophyEvent({ type: "web" }); return { stop: true }; }
     case "k": G.hasKey = true; refreshUI(); await flash("Une clé ! La porte de l'étage s'ouvrira.", 650); break;
   }
   refreshUI();
@@ -1170,7 +1354,7 @@ async function enterCell(x, y, remaining = 0) {
 function stairsPrompt(remaining) {
   const hp = Math.min(G.maxHp, hpNow());
   const pause = remaining > 0;
-  return modal(`<h2>L'escalier</h2><p>${pause ? `Tu passes sur l'escalier : ton déplacement est en pause, il te reste ${remaining} pas.` : "Des marches s'enfoncent dans l'obscurité."} Quitter l'étage ${ROMAN[G.fi]} ? Les comptes se font à la sortie.</p>
+  return modal(`<h2>L'escalier</h2><p>${pause ? `Tu passes sur l'escalier : ton déplacement est en pause, il te reste ${remaining} pas.` : "Des marches s'enfoncent dans l'obscurité."} Quitter l'étage ${toRoman((G.fi) + 1)} ? Les comptes se font à la sortie.</p>
     <div class="sum">PV : ${G.ledger.hpIn} + ${G.ledger.hpPlus} − ${G.ledger.hpMinus} = <span class="${hp < 1 ? "bad" : ""}">${hp}</span>${hp < 1 ? " — la mort" : ""}<br>¢ : ${G.ledger.cIn} + ${G.ledger.cPlus} − ${G.ledger.cMinus} = ${Math.max(0, coinsNow())}</div>`,
     [{ label: pause ? `Continuer (${remaining} pas)` : "Rester", value: false }, { label: "Descendre", value: true, cls: "primary" }]);
 }
@@ -1195,6 +1379,7 @@ async function teleportTo(x, y) {
   await moveTo(x, y, 260, .6);
   G.trail.push({ turn: G.stats.turns, pts: [[x, y]] });
   await enterCell(x, y);
+  if (deadNow()) return endRun(false);
   return endTurn(null);
 }
 const teleTarget = (x, y) => walkable(x, y) && !(x === G.hero.x && y === G.hero.y);
@@ -1205,17 +1390,19 @@ const teleTarget = (x, y) => walkable(x, y) && !(x === G.hero.x && y === G.hero.
 async function exitFloor() {
   G.busy = true; refreshUI();
   let hp = Math.min(G.maxHp, hpNow()), coins = Math.max(0, coinsNow());
+  const n = G.fi + 1, last = n >= totalFloors();
+  trophyEvent({ type: "floorExit", mode: G.mode, floor: n, coins: G.ledger.cPlus });
   if (hp < 1) {
-    G.deaths++; G.stats.floorsDead.push(G.fi + 1);
-    const last = G.fi + 1 >= FLOORS.length;
-    await modal(`<h2>Ici repose un héros</h2><p>Tu quittes l'étage ${ROMAN[G.fi]} avec ${hp} PV. Une tombe de plus sur ta feuille d'aventure. Comme le veut le livret, tu repars ${last ? "vers la Salle du Trésor" : "à l'étage suivant"} avec ${START_HP} PV et 0 ¢.</p><p class="muted">Tombes : ${G.deaths}</p>`,
+    if (G.mode !== "normal") return endRun(false);
+    G.deaths++; G.stats.floorsDead.push(n);
+    await modal(`<h2>Ici repose un héros</h2><p>Tu quittes l'étage ${toRoman(n)} avec ${hp} PV. Une tombe de plus sur ta feuille d'aventure. Comme le veut le livret, tu repars ${last ? "vers la Salle du Trésor" : "à l'étage suivant"} avec ${START_HP} PV et 0 ¢.</p><p class="muted">Tombes : ${G.deaths}</p>`,
       [{ label: "Se relever", value: true, cls: "primary" }]);
     hp = START_HP; coins = 0;
   }
-  if (SHOP_AFTER.has(G.fi + 1) && G.fi + 1 < FLOORS.length) ({ hp, coins } = await shop(hp, coins));
+  if (last) { G.busy = false; return endRun(true, hp, coins); }
+  if (shopAfter(n)) ({ hp, coins } = await shop(hp, coins));
   G.busy = false;
-  if (G.fi + 1 >= FLOORS.length) return treasureRoom(hp, coins);
-  loadFloor(G.fi + 1, hp, coins);
+  loadFloor(n, hp, coins);
 }
 function shop(hp, coins) {
   return new Promise(resolve => {
@@ -1225,7 +1412,7 @@ function shop(hp, coins) {
       card.innerHTML = `<h2>Le marchand</h2><div class="sum">${hp} / ${G.maxHp} PV · ${coins} ¢</div><p class="muted">${msg}</p>
         <div class="section-h">Usage instantané</div><div class="list" id="shopNow"></div>
         <div class="section-h">Usage unique (dans ton sac)</div><div class="list" id="shopItems"></div>
-        <div class="btns"><button class="primary" id="shopNext">Descendre à l'étage ${ROMAN[G.fi + 1]}</button></div>`;
+        <div class="btns"><button class="primary" id="shopNext">Descendre à l'étage ${toRoman((G.fi + 1) + 1)}</button></div>`;
       for (const it of SHOP) {
         const li = document.createElement("div"); li.className = "li" + (it.kind === "next" && G.next[it.id] ? " owned" : "");
         const own = it.kind === "item" && G.items[it.id] ? ` · ×${G.items[it.id]} dans le sac` : "";
@@ -1240,7 +1427,7 @@ function shop(hp, coins) {
             case "festin": hp = Math.min(G.maxHp, hp + 9); msg = "+9 PV."; break;
             case "elixir": G.maxHp += 1; msg = "+1 PV max."; break;
             case "parieur": { $("modal").hidden = true; const v = await rollD6("Le Parieur", v => v >= 4 ? "+20 ¢ !" : "perdu"); if (v >= 4) { coins += 20; G.stats.gold += 20; } msg = v >= 4 ? `Parieur : ${v}, +20 ¢ !` : `Parieur : ${v}, rien.`; $("modal").hidden = false; break; }
-            default: if (it.kind === "next") { G.next[it.id] = true; msg = `${it.name} : actif à l'étage suivant.`; } else { G.items[it.id]++; msg = `${it.name} rangé dans ton sac.`; }
+            default: if (it.kind === "next") { G.next[it.id] = true; msg = `${it.name} : actif à l'étage suivant.`; } else { G.items[it.id]++; msg = `${it.name} rangé dans ton sac.`; trophyEvent({ type: "items", total: Object.values(G.items).reduce((a, b) => a + b, 0) }); }
           }
           refreshUI(); draw();
         });
@@ -1263,30 +1450,44 @@ function gemSVG() {
       <path d="M230 86 L140 92 L140 222 Z" fill="url(#g1)" opacity=".55"/>
     </g><path d="M120 48 L140 34 L128 70 Z" fill="#fff" opacity=".85"/></svg>`;
 }
-function treasureRoom(hp, coins) {
-  G.phase = "over"; refreshUI();
-  const p = profile();
+function computeScore(completed, hp, coins) {
+  const items = itemsPoints(), floorsDone = completed ? G.fi + 1 : G.fi;
+  if (G.mode === "quick") return { score: hp + coins + items, items, floorsDone, parts: [["PV", hp], ["Pièces", coins], ["Objets non utilisés", items]] };
+  if (G.mode === "endless") return { score: 10 * floorsDone + coins + items, items, floorsDone, parts: [[`Étages terminés (${floorsDone} × 10)`, 10 * floorsDone], ["Pièces", coins], ["Objets non utilisés", items]] };
+  return { score: Math.max(0, coins + hp + items - 10 * G.deaths), items, floorsDone,
+    parts: [["Pièces", coins], ["PV", hp], ["Objets non utilisés", items], [`Tombes (${G.deaths} × −10)`, -10 * G.deaths]] };
+}
+function endRun(completed, hp = 0, coins = Math.max(0, coinsNow())) {
+  G.phase = "over"; G.pick = null; G.busy = false; G.teleMode = false; $("banner").hidden = true; refreshUI();
+  if (!completed) hp = 0;
+  const sc = computeScore(completed, hp, coins), mode = G.mode, p = profile();
   let record = false;
   if (p) {
     commitStats();
-    p.stats.wins++; record = p.stats.tombsBest === null || G.deaths < p.stats.tombsBest;
-    if (record) p.stats.tombsBest = G.deaths;
-    p.stats.floorMax = Math.max(p.stats.floorMax, FLOORS.length);
-    p.save = null; saveStore(); pushProfile(p);
+    if (completed) p.stats.wins++;
+    if (mode === "normal" && completed && (p.stats.tombsBest === null || G.deaths < p.stats.tombsBest)) p.stats.tombsBest = G.deaths;
+    record = !(p.best[mode] >= sc.score); if (record) p.best[mode] = sc.score;
+    delete p.saves[mode];
+    store.runs.push({ id: Date.now().toString(36) + Math.floor(R() * 1e4).toString(36), pid: p.id, name: p.name, avatar: p.avatar | 0, mode, score: sc.score,
+      completed, floors: sc.floorsDone, coins, hp, tombs: G.deaths, items: sc.items, date: Date.now() });
+    for (const m of MODE_IDS) { const rs = store.runs.filter(r => r.mode === m).sort((a, b) => b.score - a.score); if (rs.length > 100) store.runs = store.runs.filter(r => r.mode !== m || rs.indexOf(r) < 100); }
+    saveStore();
+    trophyEvent({ type: "runEnd", mode, completed, score: sc.score, tombs: G.deaths, hpLost: G.run.hpLost });
   }
-  const name = `${GEM_A[Math.floor(R() * GEM_A.length)]} ${GEM_B[Math.floor(R() * GEM_B.length)]}`;
-  screen(`<h2>La Salle du Trésor</h2><p>Au fond de la dernière salle repose une gemme. Tu la prends : c'est la <b>${name}</b>.</p>${gemSVG()}
-    <div class="list">
-      <div class="li"><b>Tombes</b><span>${G.deaths}${G.stats.floorsDead.length ? ` (étage ${G.stats.floorsDead.map(f => ROMAN[f - 1]).join(", ")})` : ""}</span></div>
-      <div class="li"><b>¢ final</b><span>${coins}</span></div>
-      <div class="li"><b>PV final</b><span>${hp} / ${G.maxHp}</span></div>
-      <div class="li"><b>Tours</b><span>${G.stats.turns}</span></div>
-      <div class="li"><b>Lancers de dé</b><span>${G.stats.rolls}</span></div>
-    </div>
-    ${record ? `<p class="muted">Nouveau record : ton donjon le moins meurtrier.</p>` : ""}
-    <div class="btns"><button id="toMenu">Menu</button><button class="primary" id="againBtn">Nouveau donjon</button></div>`);
+  const title = completed ? (mode === "normal" ? "La Salle du Trésor" : "Partie rapide terminée") : "Plus de points de vie";
+  const intro = completed && mode === "normal"
+    ? `<p>Au fond de la cinquantième salle repose une gemme. Tu la prends : c'est la <b>${GEM_A[Math.floor(R() * GEM_A.length)]} ${GEM_B[Math.floor(R() * GEM_B.length)]}</b>.</p>${gemSVG()}`
+    : completed ? `<p>Tu remontes des cinq étages avec ton butin.</p>`
+    : `<p>Tu t'effondres à l'étage ${toRoman(G.fi + 1)}${mode === "endless" ? ` du donjon sans fin` : ""}. La partie s'arrête là : on compte les points.</p>`;
+  screen(`<h2>${title}</h2>${intro}
+    <div class="score-big"><small>${esc(MODES[mode].name)} · score</small>${sc.score}</div>
+    <div class="list">${sc.parts.map(([k, v]) => `<div class="li"><b>${k}</b><span>${v > 0 && k.startsWith("Tombes") ? "+" : ""}${v}</span></div>`).join("")}
+      <div class="li"><b>Lancers de dé</b><span>${G.stats.rolls}</span></div></div>
+    ${record ? `<p class="muted center">Nouveau record personnel dans ce mode.</p>` : ""}
+    <div class="btns"><button id="toMenu">Menu</button><button id="toBoard">Classement</button><button class="primary" id="againBtn">Rejouer</button></div>`);
   $("toMenu").addEventListener("click", homeScreen);
-  $("againBtn").addEventListener("click", () => { hideScreen(); newGame(); });
+  $("toBoard").addEventListener("click", () => boardScreen(mode));
+  $("againBtn").addEventListener("click", () => { hideScreen(); newGame(mode); });
 }
 function modal(html, buttons) {
   return new Promise(resolve => {
@@ -1346,36 +1547,53 @@ function homeScreen() {
   G.phase = "menu"; G.busy = false; G.pick = null; G.teleMode = false; refreshUI();
   const p = profile();
   if (!p) return nameScreen(null);
-  const save = p.save;
+  const nTroph = Object.keys(p.trophies || {}).length;
   screen(`${coverSVG()}
     <div class="bigtitle">Diceplacement</div>
     <div class="subtitle">Aventures dans le donjon — une aventure dont tu tiens le dé</div>
     <div class="hello">${avHTML(p.avatar, "lg")}Bonjour, ${esc(p.name)}.</div>
     <div class="btns col">
-      ${save ? `<button class="primary" id="hContinue">Continuer · étage ${ROMAN[save.fi]}, ✝ ${save.deaths}</button>` : ""}
-      <button ${save ? "" : `class="primary"`} id="hNew">Nouvelle partie</button>
+      <button class="primary" id="hPlay">Jouer</button>
       <button id="hBoard">Classement</button>
+      <button id="hTroph">Trophées · ${nTroph} / ${TROPHIES.length}</button>
       <button id="hProfiles">Changer de profil</button>
       <button id="hRules">Règles</button>
     </div>`);
-  if (save) $("hContinue").addEventListener("click", () => { hideScreen(); resumeGame(save); });
-  $("hNew").addEventListener("click", () => {
-    if (!save) { hideScreen(); return newGame(); }
-    screen(`<h2>Abandonner ?</h2><p>Une partie est en cours (étage ${ROMAN[save.fi]}). En commencer une nouvelle l'efface.</p>
-      <div class="btns"><button id="cNo">Garder ma partie</button><button class="danger" id="cYes">Nouvelle partie</button></div>`);
-    $("cNo").addEventListener("click", homeScreen);
-    $("cYes").addEventListener("click", () => { hideScreen(); newGame(); });
-  });
-  $("hBoard").addEventListener("click", () => { boardSort = null; boardScreen(null); });
+  $("hPlay").addEventListener("click", modeScreen);
+  $("hBoard").addEventListener("click", () => boardScreen("quick"));
+  $("hTroph").addEventListener("click", trophiesScreen);
   $("hProfiles").addEventListener("click", profilesScreen);
   $("hRules").addEventListener("click", rulesScreen);
 }
-let pickAv = 0;
-function avPickHTML() { return AVATARS.map((a, i) => `<button type="button" data-av="${i}" aria-pressed="${i === pickAv}" aria-label="Avatar ${i + 1}">${avHTML(i)}</button>`).join(""); }
-function wireAvPick() {
-  $("avPick").querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
-    pickAv = +b.dataset.av; $("avPick").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+function modeScreen() {
+  current = "modes";
+  const p = profile();
+  screen(`<h2>Choisis ton aventure</h2>${MODE_IDS.map(m => { const sv = p.saves[m];
+    return `<div class="mode"><h3>${MODES[m].name}</h3><p>${MODES[m].desc}</p>
+      <span class="best">${p.best[m] !== undefined ? `Ton record : ${p.best[m]} points` : "Pas encore de partie terminée."}</span>
+      <div class="btns">${sv ? `<button class="primary small" data-cont="${m}">Continuer · étage ${toRoman(sv.fi + 1)}</button>` : ""}<button class="small ${sv ? "" : "primary"}" data-new="${m}">Nouvelle partie</button></div></div>`; }).join("")}
+    <div class="btns"><button id="mBack">Retour</button></div>`);
+  $("mBack").addEventListener("click", homeScreen);
+  $("modalCard").querySelectorAll("[data-cont]").forEach(b => b.addEventListener("click", () => { const m = b.dataset.cont; hideScreen(); resumeGame(m, p.saves[m]); }));
+  $("modalCard").querySelectorAll("[data-new]").forEach(b => b.addEventListener("click", () => {
+    const m = b.dataset.new, sv = p.saves[m];
+    if (!sv) { hideScreen(); return newGame(m); }
+    screen(`<h2>Abandonner ?</h2><p>Une partie ${MODES[m].name.toLowerCase()} est en cours (étage ${toRoman(sv.fi + 1)}). En commencer une nouvelle l'efface.</p>
+      <div class="btns"><button id="cNo">Garder ma partie</button><button class="danger" id="cYes">Nouvelle partie</button></div>`);
+    $("cNo").addEventListener("click", modeScreen);
+    $("cYes").addEventListener("click", () => { delete p.saves[m]; saveStore(); hideScreen(); newGame(m); });
   }));
+}
+function trophiesScreen() {
+  current = "trophies";
+  const p = profile(); const got = p.trophies || {}, ctr = p.counters || {};
+  const fmt = t => new Date(t).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+  screen(`<h2>Les trophées</h2><p class="muted center">${Object.keys(got).length} sur ${TROPHIES.length} obtenus</p>
+    <div>${TROPHIES.map(t => { const ok = !!got[t.id], hide = t.secret && !ok;
+      const prog = t.counter && !ok ? `<div class="prog" aria-label="${Math.min(ctr[t.counter] || 0, t.goal)} sur ${t.goal}"><i style="width:${Math.min(100, (ctr[t.counter] || 0) / t.goal * 100)}%"></i></div><small>${Math.min(ctr[t.counter] || 0, t.goal)} / ${t.goal}</small>` : "";
+      return `<div class="trophy ${ok ? "" : "locked"}"><span class="ico" aria-hidden="true">${hide ? "❔" : t.ico}</span><div><b>${hide ? "???" : esc(t.name)}</b><small>${hide ? "Trophée secret." : esc(t.desc)}</small>${hide ? "" : prog}</div><span class="when">${ok ? fmt(got[t.id]) : ""}</span></div>`; }).join("")}</div>
+    <div class="btns"><button class="primary" id="tBack">Retour</button></div>`);
+  $("tBack").addEventListener("click", homeScreen);
 }
 function nameScreen(editing) {
   const first = !store.profiles.length;
@@ -1404,7 +1622,7 @@ function profilesScreen() {
   const list = $("pList");
   for (const p of store.profiles) {
     const li = document.createElement("div"); li.className = "li" + (p.id === store.active ? " active" : "");
-    li.innerHTML = `<div style="display:flex;gap:10px;align-items:center">${avHTML(p.avatar)}<div><b>${esc(p.name)}</b><small>${p.id === store.active ? "Profil actif · " : ""}étage max ${p.stats.floorMax ? ROMAN[p.stats.floorMax - 1] : "—"}, ${p.stats.wins} donjon${p.stats.wins > 1 ? "s" : ""} fini${p.stats.wins > 1 ? "s" : ""}${p.save ? ", une partie en cours" : ""}</small></div></div>`;
+    li.innerHTML = `<div style="display:flex;gap:10px;align-items:center">${avHTML(p.avatar)}<div><b>${esc(p.name)}</b><small>${p.id === store.active ? "Profil actif · " : ""}étage max ${p.stats.floorMax ? toRoman(p.stats.floorMax) : "—"}, ${p.stats.wins} donjon${p.stats.wins > 1 ? "s" : ""} fini${p.stats.wins > 1 ? "s" : ""}${Object.keys(p.saves || {}).length ? ", une partie en cours" : ""}</small></div></div>`;
     const acts = document.createElement("div"); acts.className = "acts";
     const mk = (label, fn, cls = "", dis = false) => { const b = document.createElement("button"); b.className = "small " + cls; b.textContent = label; b.disabled = dis; b.addEventListener("click", fn); acts.appendChild(b); };
     if (p.id !== store.active) mk("Choisir", () => { store.active = p.id; saveStore(); homeScreen(); }, "primary");
@@ -1433,29 +1651,37 @@ const BOARD_COLS = [
   { key: "tombsBest", label: "Moins de tombes", dir: 1 },
 ];
 let boardSort = null;
-function boardScreen(sortKey = boardSort) {
+function boardScreen(tab = "quick", sortKey = boardSort) {
   current = "board"; boardSort = sortKey;
   const me = profile();
-  const rows = store.profiles.map(p => ({ name: p.name, avatar: p.avatar | 0, stats: p.stats, me: !!me && p.id === me.id }));
-  const val = (r, k) => k === "name" ? lower(r.name) : r.stats[k];
-  rows.sort((a, b) => {
-    if (!sortKey) return (b.stats.floorMax - a.stats.floorMax) || (b.stats.gold - a.stats.gold);
-    const col = BOARD_COLS.find(c => c.key === sortKey), va = val(a, sortKey), vb = val(b, sortKey);
-    if (va === null && vb === null) return 0; if (va === null) return 1; if (vb === null) return -1;
-    return (va < vb ? -1 : va > vb ? 1 : 0) * col.dir;
-  });
-  screen(`<h2>Le classement</h2>
-    <div class="lb-wrap"><table class="lb"><thead><tr>${BOARD_COLS.map(c => `<th class="${sortKey === c.key ? "sorted" : ""}"><button data-k="${c.key}">${c.label}</button></th>`).join("")}</tr></thead>
-    <tbody>${rows.map((r, i) => `<tr class="${r.me ? "me" : ""}">
-      <td><span class="rank">${ROMAN[i] || i + 1}.</span>${avHTML(r.avatar)}${esc(r.name)}</td>
-      <td>${r.stats.floorMax ? ROMAN[r.stats.floorMax - 1] : "—"}</td>
-      <td>${r.stats.gold}<small>record ${r.stats.goldBest}</small></td>
-      <td>${r.stats.rolls}</td>
-      <td>${r.stats.wins}<small>${r.stats.games} partie${r.stats.games > 1 ? "s" : ""}</small></td>
-      <td>${r.stats.tombsBest === null ? "—" : r.stats.tombsBest}</td></tr>`).join("")}</tbody></table></div>
-    <p class="muted">Les profils de cet appareil. Touche un en-tête pour trier.</p>
-    <div class="btns"><button class="primary" id="bBack">Retour</button></div>`);
-  $("modalCard").querySelectorAll("th button").forEach(b => b.addEventListener("click", () => boardScreen(b.dataset.k)));
+  const tabs = `<div class="tabs">${MODE_IDS.map(m => `<button class="small" data-t="${m}" aria-pressed="${tab === m}">${MODES[m].name}</button>`).join("")}<button class="small" data-t="profiles" aria-pressed="${tab === "profiles"}">Profils</button></div>`;
+  let body;
+  if (tab === "profiles") {
+    const rows = store.profiles.map(p => ({ name: p.name, avatar: p.avatar | 0, stats: p.stats, me: !!me && p.id === me.id }));
+    const val = (r, k) => k === "name" ? lower(r.name) : r.stats[k];
+    rows.sort((a, b) => {
+      if (!sortKey) return (b.stats.floorMax - a.stats.floorMax) || (b.stats.gold - a.stats.gold);
+      const col = BOARD_COLS.find(c => c.key === sortKey), va = val(a, sortKey), vb = val(b, sortKey);
+      if (va === null && vb === null) return 0; if (va === null) return 1; if (vb === null) return -1;
+      return (va < vb ? -1 : va > vb ? 1 : 0) * col.dir;
+    });
+    body = `<div class="lb-wrap"><table class="lb"><thead><tr>${BOARD_COLS.map(c => `<th class="${sortKey === c.key ? "sorted" : ""}"><button data-k="${c.key}">${c.label}</button></th>`).join("")}</tr></thead>
+      <tbody>${rows.map((r, i) => `<tr class="${r.me ? "me" : ""}"><td><span class="rank">${toRoman(i + 1)}.</span>${avHTML(r.avatar)}${esc(r.name)}</td>
+        <td>${toRoman(r.stats.floorMax)}</td><td>${r.stats.gold}<small>record ${r.stats.goldBest}</small></td><td>${r.stats.rolls}</td>
+        <td>${r.stats.wins}<small>${r.stats.games} partie${r.stats.games > 1 ? "s" : ""}</small></td><td>${r.stats.tombsBest === null ? "—" : r.stats.tombsBest}</td></tr>`).join("")}</tbody></table></div>
+      <p class="muted">Statistiques cumulées des profils de cet appareil. Touche un en-tête pour trier.</p>`;
+  } else {
+    const runs = store.runs.filter(r => r.mode === tab).sort((a, b) => b.score - a.score || a.date - b.date).slice(0, 30);
+    const detail = r => tab === "normal" ? `${r.completed ? "fini" : "étage " + toRoman(r.floors)} · ${r.coins} ¢ · ${r.hp} PV · ✝ ${r.tombs}` : tab === "quick" ? `${r.completed ? "fini" : "étage " + toRoman(r.floors + 1)} · ${r.hp} PV · ${r.coins} ¢` : `${r.floors} étage${r.floors > 1 ? "s" : ""} · ${r.coins} ¢`;
+    const fmt = t => new Date(t).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+    body = runs.length ? `<div class="lb-wrap"><table class="lb"><thead><tr><th>Joueur</th><th>Score</th><th>Date</th></tr></thead><tbody>${runs.map((r, i) => `<tr class="${me && r.pid === me.id ? "me" : ""}">
+      <td><span class="rank">${toRoman(i + 1)}.</span>${avHTML(r.avatar)}${esc(r.name)}<small>${detail(r)}${r.items ? ` · objets +${r.items}` : ""}</small></td><td><b>${r.score}</b></td><td>${fmt(r.date)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="muted center">Aucune partie terminée dans ce mode pour l'instant.</p>`;
+    body += `<p class="muted">${esc(MODES[tab].desc)}</p>`;
+  }
+  screen(`<h2>Le classement</h2>${tabs}${body}<div class="btns"><button class="primary" id="bBack">Retour</button></div>`);
+  $("modalCard").querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => boardScreen(b.dataset.t, null)));
+  $("modalCard").querySelectorAll("th button").forEach(b => b.addEventListener("click", () => boardScreen("profiles", b.dataset.k)));
   $("bBack").addEventListener("click", () => { boardSort = null; homeScreen(); });
 }
 function rulesScreen() {
@@ -1466,7 +1692,7 @@ function rulesScreen() {
       <li>Contre un mur, tu rebondis. Demi-tour seulement s'il n'y a pas d'autre chemin, même par rapport au tour d'avant.</li>
       <li>Tout ce que tu traverses s'applique : pièces, coffres, monstres, cœurs, toiles (qui t'arrêtent), clés, téléportails. Seul l'escalier est facultatif : traverse-le, ou finis ton tour dessus ou à côté.</li>
       <li>Les PV et les pièces se comptent à la sortie de l'étage. Sous 1 PV, c'est une tombe, et tu repars avec 10 PV et 0 ¢.</li>
-      <li>Six étages, deux marchands, puis la Salle du Trésor. Le but : finir avec le moins de tombes possible.</li>
+      <li>Trois modes : la <b>partie rapide</b> (5 étages, plus de PV = fin), le mode <b>normal</b> (50 étages jusqu'à la Salle du Trésor, une mort ajoute une tombe) et le mode <b>sans fin</b>. Les objets non utilisés rapportent des points en fin de partie.</li>
     </ul>
     <div class="btns"><button class="primary" id="rBack">Retour</button></div>`);
   $("rBack").addEventListener("click", homeScreen);
@@ -1499,7 +1725,7 @@ view.addEventListener("pointerdown", e => {
 $("rollBtn").addEventListener("click", () => playTurn());
 $("menuBtn").addEventListener("click", async () => {
   if (G.busy || G.phase !== "play") return;
-  const ok = await modal(`<h2>Retour au menu ?</h2><p>Ta partie est sauvegardée au début de l'étage ${ROMAN[G.fi]}. En revenant, tu reprendras cet étage depuis le départ.</p>`,
+  const ok = await modal(`<h2>Retour au menu ?</h2><p>Ta partie est sauvegardée au début de l'étage ${toRoman((G.fi) + 1)}. En revenant, tu reprendras cet étage depuis le départ.</p>`,
     [{ label: "Continuer à jouer", value: false }, { label: "Menu", value: true, cls: "primary" }]);
   if (ok) homeScreen();
 });
@@ -1521,8 +1747,7 @@ G.ledger = { hpIn: START_HP, hpPlus: 0, hpMinus: 0, cIn: 0, cPlus: 0, cMinus: 0 
 for (let y = 0; y < G.H; y++) for (let x = 0; x < G.W; x++) if (G.map[y][x] === "P") Object.assign(G.hero, { x, y, px: x, py: y });
 requestAnimationFrame(loop);
 homeScreen();
-window.__dpp = G; window.__store = () => store;
+window.__dpp = G; window.__store = () => store; window.__test_loadFloor = loadFloor; // accès de test
 </script>
 
-</body>
-</html>
+</body></html>
