@@ -3,10 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Diceplacement</title>
+<meta name="description" content="Un donjon à la plume, où tu avances au dé : impair en diagonale, pair en ligne droite.">
+<meta name="theme-color" content="#efe5cf">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Diceplacement">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <style>html,body{margin:0;padding:0}</style>
 </head>
 <body>
-<title>Diceplacement 3D</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English+SC&family=IM+Fell+English:ital@0;1&family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
@@ -106,6 +115,8 @@ button.primary:focus-visible { outline: 2px solid var(--red); }
 button.violet { border-color: var(--violet); color: var(--violet); }
 button.danger { border-color: var(--red); color: var(--red); }
 button.small { font-size: 14px; padding: 3px 8px; }
+a.linkbtn { font: 600 14px var(--font-body); padding: 3px 8px; text-decoration: none; background: var(--ink); color: var(--paper); border: 3px double var(--paper); outline: 2px solid var(--ink); outline-offset: -1px; display: inline-flex; align-items: center; }
+a.linkbtn:focus-visible { outline-color: var(--red); }
 
 .roll-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 #rollBtn { width: 76px; height: 76px; padding: 0; border: 0; background: none; display: grid; place-items: center; }
@@ -213,6 +224,13 @@ table.lb td .av { width: 24px; height: 24px; font-size: 13px; margin-right: 6px;
 .mode .btns { justify-content: flex-start; }
 .score-big { text-align: center; font: 700 46px/1 var(--font-body); font-variant-numeric: lining-nums; }
 .score-big small { display: block; font: 13px var(--font-title); letter-spacing: .12em; color: var(--ink-soft); }
+.steps { margin: 0; padding-left: 0; list-style: none; counter-reset: st; display: flex; flex-direction: column; gap: 8px; }
+.steps li { counter-increment: st; display: grid; grid-template-columns: 30px 1fr; gap: 8px; align-items: start; line-height: 1.4; }
+.steps li::before { content: counter(st); font: 18px/28px var(--font-title); text-align: center; border: 2px solid var(--ink); border-radius: 50%; width: 28px; height: 28px; }
+.ios-share { display: inline-block; width: 18px; height: 18px; vertical-align: -3px; }
+.plat { display: flex; gap: 6px; justify-content: center; }
+.plat button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--paper); outline: 2px solid var(--ink); outline-offset: -1px; }
+.url { font: 14px/1.3 ui-monospace, Menlo, monospace; word-break: break-all; background: var(--paper-2); padding: 6px 8px; border: 1px solid var(--paper-3); }
 .trophy { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; border-bottom: 1px solid var(--paper-3); padding: 7px 2px; }
 .trophy .ico { font-size: 24px; text-align: center; filter: grayscale(1) sepia(.3); }
 .trophy.locked { opacity: .5; }
@@ -256,6 +274,7 @@ table.lb td .av { width: 24px; height: 24px; font-size: 13px; margin-right: 6px;
 <div id="toast" hidden role="status" aria-live="polite"></div>
 
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+<script>window.__installEvt = null; addEventListener("beforeinstallprompt", e => { e.preventDefault(); window.__installEvt = e; });</script>
 <script type="module">
 // ============================================================
 //  Étages (format carnet : 11 × 15 avec les murs du bord)
@@ -1572,7 +1591,9 @@ function homeScreen() {
       <button id="hBoard">Classement</button>
       <button id="hTroph">Trophées · ${nTroph} / ${TROPHIES.length}</button>
       <button id="hRules">Règles</button>
+      ${isStandalone() ? "" : `<button id="hInstall">${platform() === "desktop" ? "Installer le jeu" : "Installer sur mon téléphone"}</button>`}
     </div>`);
+  if ($("hInstall")) $("hInstall").addEventListener("click", installFlow);
   $("hPlay").addEventListener("click", modeScreen);
   $("hBoard").addEventListener("click", () => boardScreen("quick"));
   $("hTroph").addEventListener("click", trophiesScreen);
@@ -1785,6 +1806,67 @@ G.map = FLOORS[0].split("\n").map(r => [...r]);
 G.ledger = { hpIn: START_HP, hpPlus: 0, hpMinus: 0, cIn: 0, cPlus: 0, cMinus: 0 };
 for (let y = 0; y < G.H; y++) for (let x = 0; x < G.W; x++) if (G.map[y][x] === "P") Object.assign(G.hero, { x, y, px: x, py: y });
 requestAnimationFrame(loop);
+// ============================================================
+//  Installation sur téléphone (web app / PWA)
+// ============================================================
+const PUBLIC_URL = "https://padsauce.github.io/Diceplacements-dungeon/";
+function isStandalone() { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; }
+const IN_FRAME = (() => { try { return window.top !== window.self; } catch { return true; } })();
+const CAN_INSTALL_HERE = !IN_FRAME && (location.protocol === "https:" || location.hostname === "localhost") && "serviceWorker" in navigator && !!document.querySelector('link[rel="manifest"]');
+if (CAN_INSTALL_HERE) navigator.serviceWorker.register("sw.js").catch(() => {});
+addEventListener("appinstalled", () => { window.__installEvt = null; toast("<b>Jeu installé</b>📱 Diceplacement est sur ton écran d'accueil."); if (current === "home") homeScreen(); });
+function platform() {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return "ios";
+  if (/Android/.test(ua)) return "android";
+  return "desktop";
+}
+async function installFlow() {
+  const ev = window.__installEvt;
+  if (CAN_INSTALL_HERE && ev) {
+    window.__installEvt = null;
+    try { ev.prompt(); const r = await ev.userChoice; if (r && r.outcome === "accepted") return; } catch {}
+  }
+  installScreen(platform());
+}
+const SHARE_ICON = `<svg class="ios-share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Partager"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5"/><path d="M8 11H6v10h12V11h-2"/></svg>`;
+const INSTALL_STEPS = {
+  ios: { name: "iPhone / iPad", steps: [
+    `Ouvre le jeu dans <b>Safari</b> (ça marche aussi dans les autres navigateurs depuis iOS 16.4).`,
+    `Touche le bouton <b>Partager</b> ${SHARE_ICON}, en bas de l'écran (en haut sur iPad).`,
+    `Fais défiler et choisis <b>Sur l'écran d'accueil</b>.`,
+    `Touche <b>Ajouter</b>. L'icône Diceplacement apparaît avec tes applis.`] },
+  android: { name: "Android", steps: [
+    `Ouvre le jeu dans <b>Chrome</b> (ou Edge, Samsung Internet).`,
+    `Touche le menu <b>⋮</b> en haut à droite.`,
+    `Choisis <b>Installer l'application</b> (ou <b>Ajouter à l'écran d'accueil</b>).`,
+    `Confirme. L'icône Diceplacement apparaît avec tes applis.`] },
+  desktop: { name: "Ordinateur", steps: [
+    `Ouvre le jeu dans <b>Chrome</b> ou <b>Edge</b>.`,
+    `Clique sur l'icône d'installation à droite de la barre d'adresse (un écran avec une flèche).`,
+    `Confirme avec <b>Installer</b>.`] },
+};
+function installScreen(plat) {
+  current = "install";
+  const s = INSTALL_STEPS[plat];
+  const away = !CAN_INSTALL_HERE;
+  screen(`<h2>Installer le jeu</h2>
+    <p>Diceplacement s'installe comme une appli, sans passer par un store : une icône sur l'écran d'accueil, le jeu en plein écran, et il marche même sans connexion.</p>
+    ${away ? `<p><b>Cette page ne peut pas s'installer telle quelle.</b> Ouvre d'abord la version publique sur ton téléphone :</p>
+      <div class="url">${PUBLIC_URL}</div>
+      <div class="btns" style="justify-content:center"><button class="small" id="iCopy">Copier le lien</button><a class="linkbtn" href="${PUBLIC_URL}" target="_blank" rel="noopener">Ouvrir</a></div>
+      <p class="muted">Puis, là-bas, touche « Installer sur mon téléphone » ou suis ces étapes :</p>` : ""}
+    <div class="plat">${Object.entries(INSTALL_STEPS).map(([k, v]) => `<button class="small" data-plat="${k}" aria-pressed="${k === plat}">${v.name}</button>`).join("")}</div>
+    <ol class="steps">${s.steps.map(t => `<li><span>${t}</span></li>`).join("")}</ol>
+    ${plat === "ios" ? `<p class="muted">Sur iPhone, l'appli installée a sa propre mémoire : les profils et les scores de Safari n'y sont pas repris.</p>` : ""}
+    <div class="btns"><button class="primary" id="iBack">Retour</button></div>`);
+  $("iBack").addEventListener("click", homeScreen);
+  $("modalCard").querySelectorAll("[data-plat]").forEach(b => b.addEventListener("click", () => installScreen(b.dataset.plat)));
+  if ($("iCopy")) $("iCopy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(PUBLIC_URL); $("iCopy").textContent = "Lien copié"; } catch { $("iCopy").textContent = "Copie impossible"; }
+  });
+}
+
 homeScreen();
 window.__dpp = G; window.__store = () => store; window.__test_loadFloor = loadFloor; // accès de test
 </script>

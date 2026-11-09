@@ -12,6 +12,15 @@ Trois modes de jeu :
 
 Chaque mode a son classement local et une sauvegarde à part. Des trophées se débloquent en jouant.
 
-- Tout est dans `index.html` (HTML, CSS et JavaScript). Les polices viennent de Google Fonts et le moteur 3D de Three.js 0.160.0 (jsDelivr).
+## Installer sur un téléphone
+
+Le jeu s'installe comme une appli depuis le lien ci-dessus, sans store. Il marche ensuite hors connexion.
+
+- **Android** (Chrome, Edge, Samsung Internet) : bouton « Installer sur mon téléphone » dans le menu du jeu, ou menu ⋮ puis « Installer l'application ».
+- **iPhone / iPad** : bouton Partager, puis « Sur l'écran d'accueil », puis « Ajouter ». Le jeu installé a sa propre mémoire : les profils de Safari n'y sont pas repris.
+
+## Technique
+
+- Tout le jeu est dans `index.html` (HTML, CSS et JavaScript). `manifest.webmanifest`, `sw.js` (cache hors connexion) et `icons/` en font une web app installable. Les polices viennent de Google Fonts et le moteur 3D de Three.js 0.160.0 (jsDelivr).
 - Profils, sauvegarde et classement restent dans le navigateur du joueur. Aucune base de données.
 - Le jeu Unity est développé dans un autre dépôt, privé.

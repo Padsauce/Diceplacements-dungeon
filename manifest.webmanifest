@@ -1,0 +1,19 @@
+{
+  "name": "Diceplacement — Aventures dans le donjon",
+  "short_name": "Diceplacement",
+  "description": "Un donjon à la plume, où tu avances au dé : impair en diagonale, pair en ligne droite.",
+  "lang": "fr",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#2b241c",
+  "theme_color": "#efe5cf",
+  "categories": ["games"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
