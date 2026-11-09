@@ -150,6 +150,14 @@ button.small { font-size: 14px; padding: 3px 8px; }
 .bigtitle { font: 44px/1 var(--font-title); text-align: center; letter-spacing: .01em; }
 .subtitle { text-align: center; font: italic 17px var(--font-fell); color: var(--ink-2); }
 .hello { text-align: center; font: italic 20px var(--font-fell); }
+button.hello { display: flex; align-items: center; justify-content: center; gap: 2px; margin: 4px auto 2px; padding: 6px 14px 6px 8px; background: transparent; border: 1px dotted currentColor; border-radius: 999px; box-shadow: none; color: inherit; min-height: 0; }
+button.hello:hover, button.hello:focus-visible { border-style: solid; }
+button.hello .chev { font-size: 14px; margin-left: 6px; opacity: .7; }
+.pcard { text-align: center; }
+.pcard .pname { font: 26px var(--font-fell); margin: 6px 0 2px; }
+.kv { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 10px 0; text-align: left; }
+.kv div { display: flex; justify-content: space-between; border-bottom: 1px dotted currentColor; padding: 2px 0; gap: 8px; }
+.kv b { font-weight: 600; }
 .rules { margin: 0; padding: 0 0 0 20px; line-height: 1.45; }
 .rules li { margin-bottom: 4px; }
 .section-h { font: 15px var(--font-title); letter-spacing: .1em; color: var(--ink-soft); border-bottom: 1px solid var(--ink); }
@@ -1551,18 +1559,17 @@ function homeScreen() {
   screen(`${coverSVG()}
     <div class="bigtitle">Diceplacement</div>
     <div class="subtitle">Aventures dans le donjon — une aventure dont tu tiens le dé</div>
-    <div class="hello">${avHTML(p.avatar, "lg")}Bonjour, ${esc(p.name)}.</div>
+    <button class="hello" id="hMe" aria-label="Ma fiche de profil">${avHTML(p.avatar, "lg")}Bonjour, ${esc(p.name)}.<span class="chev">▾</span></button>
     <div class="btns col">
       <button class="primary" id="hPlay">Jouer</button>
       <button id="hBoard">Classement</button>
       <button id="hTroph">Trophées · ${nTroph} / ${TROPHIES.length}</button>
-      <button id="hProfiles">Changer de profil</button>
       <button id="hRules">Règles</button>
     </div>`);
   $("hPlay").addEventListener("click", modeScreen);
   $("hBoard").addEventListener("click", () => boardScreen("quick"));
   $("hTroph").addEventListener("click", trophiesScreen);
-  $("hProfiles").addEventListener("click", profilesScreen);
+  $("hMe").addEventListener("click", meScreen);
   $("hRules").addEventListener("click", rulesScreen);
 }
 function modeScreen() {
@@ -1595,7 +1602,16 @@ function trophiesScreen() {
     <div class="btns"><button class="primary" id="tBack">Retour</button></div>`);
   $("tBack").addEventListener("click", homeScreen);
 }
-function nameScreen(editing) {
+let pickAv = 0;
+function avPickHTML() { return AVATARS.map((a, i) => `<button type="button" data-av="${i}" aria-pressed="${i === pickAv}" aria-label="Avatar ${i + 1}">${avHTML(i)}</button>`).join(""); }
+function wireAvPick() {
+  $("avPick").querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+    pickAv = +b.dataset.av; $("avPick").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  }));
+}
+let nameBack = null;
+function nameScreen(editing, back = profilesScreen) {
+  nameBack = back;
   const first = !store.profiles.length;
   current = editing ? "edit" : "name"; pickAv = editing ? editing.avatar | 0 : 0;
   screen(`<h2>${editing ? "Modifier le profil" : first ? "Qui es-tu, aventurier ?" : "Nouveau profil"}</h2>
@@ -1606,18 +1622,34 @@ function nameScreen(editing) {
     <div class="btns">${first ? "" : `<button type="button" id="nBack">Retour</button>`}<button type="submit" class="primary">${editing ? "Enregistrer" : first ? "Entrer dans le donjon" : "Créer le profil"}</button></div></form>`);
   wireAvPick();
   $("nInput").focus();
-  if (!first) $("nBack").addEventListener("click", profilesScreen);
+  if (!first) $("nBack").addEventListener("click", () => nameBack());
   $("nForm").addEventListener("submit", e => {
     e.preventDefault();
     const err = validName($("nInput").value, editing && editing.id);
     if (err) { $("nErr").textContent = err; return; }
-    if (editing) { editing.name = $("nInput").value.trim(); editing.avatar = pickAv; saveStore(); profilesScreen(); }
+    if (editing) { editing.name = $("nInput").value.trim(); editing.avatar = pickAv; saveStore(); nameBack(); }
     else { createProfile($("nInput").value, pickAv); homeScreen(); }
   });
 }
+function meScreen() {
+  current = "me";
+  const p = profile(); if (!p) return homeScreen();
+  const st = p.stats, nT = Object.keys(p.trophies || {}).length;
+  const kv = (k, v) => `<div><span>${k}</span><b>${v}</b></div>`;
+  screen(`<div class="pcard">${avHTML(p.avatar, "lg")}<div class="pname">${esc(p.name)}</div>
+      <p class="muted">${store.profiles.length > 1 ? `Un des ${store.profiles.length} profils de cet appareil.` : "Le seul profil de cet appareil."}</p></div>
+    <div class="section-h">Records</div>
+    <div class="kv">${MODE_IDS.map(m => kv(MODES[m].name, p.best[m] !== undefined ? p.best[m] + " pts" : "—")).join("")}${kv("Trophées", `${nT} / ${TROPHIES.length}`)}</div>
+    <div class="section-h">Statistiques</div>
+    <div class="kv">${kv("Étage max", st.floorMax ? toRoman(st.floorMax) : "—")}${kv("Or gagné", st.gold + " ¢")}${kv("Lancers", st.rolls)}${kv("Parties", st.games)}${kv("Donjons finis", st.wins)}${kv("Moins de tombes", st.tombsBest ?? "—")}</div>
+    <div class="btns"><button id="meBack">Retour</button><button id="meEdit">Modifier</button><button class="primary" id="meSwitch">Changer de profil</button></div>`);
+  $("meBack").addEventListener("click", homeScreen);
+  $("meEdit").addEventListener("click", () => nameScreen(p, meScreen));
+  $("meSwitch").addEventListener("click", profilesScreen);
+}
 function profilesScreen() {
   current = "profiles";
-  screen(`<h2>Les profils</h2><div class="list" id="pList"></div>
+  screen(`<h2>Changer de profil</h2><div class="list" id="pList"></div>
     <div class="btns"><button id="pBack">Retour</button><button class="primary" id="pNew">Nouveau profil</button></div>`);
   const list = $("pList");
   for (const p of store.profiles) {
@@ -1639,7 +1671,7 @@ function profilesScreen() {
     }, "danger", store.profiles.length < 2);
     li.appendChild(acts); list.appendChild(li);
   }
-  $("pBack").addEventListener("click", homeScreen);
+  $("pBack").addEventListener("click", meScreen);
   $("pNew").addEventListener("click", () => nameScreen(null));
 }
 const BOARD_COLS = [
